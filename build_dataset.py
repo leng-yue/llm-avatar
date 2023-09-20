@@ -75,7 +75,7 @@ def preprocess_dataset(tokenizer: AutoTokenizer, max_length: int, seed, dataset)
 
 if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(
-        "baichuan-inc/Baichuan2-13B-Base",
+        "baichuan-inc/Baichuan2-7B-Base",
         use_fast=False,
         trust_remote_code=True,
     )
