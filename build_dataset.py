@@ -14,7 +14,7 @@ def preprocessing_function(
     assistant_tokens=[196],
     system_tokens=[197],
     ignore_index=-100,
-    pad_to_max_length=True,
+    inference=False,
 ):
     input_ids = []
     labels = []
@@ -34,14 +34,15 @@ def preprocessing_function(
             input_ids += system_tokens + value_ids
             labels += [ignore_index] + value_ids
 
-    input_ids.append(tokenizer.eos_token_id)
-    labels.append(tokenizer.eos_token_id)
+    if inference is False:
+        input_ids.append(tokenizer.eos_token_id)
+        labels.append(tokenizer.eos_token_id)
 
     input_ids = input_ids[:max_length]
     labels = labels[:max_length]
     attention_mask = [1] * len(input_ids)
 
-    if pad_to_max_length:
+    if inference is False:
         input_ids += [tokenizer.pad_token_id] * (max_length - len(input_ids))
         labels += [ignore_index] * (max_length - len(labels))
         attention_mask += [0] * (max_length - len(attention_mask))
