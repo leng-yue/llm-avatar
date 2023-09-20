@@ -6,46 +6,49 @@ from loguru import logger
 from transformers import AutoTokenizer
 
 
-def create_prompt(sample):
-    messages = sample["messages"]
-    prompt = ""
+def preprocessing_function(
+    sample,
+    tokenizer,
+    max_length,
+    user_tokens=[195],
+    assistant_tokens=[196],
+    system_tokens=[197],
+    ignore_index=-100,
+):
+    input_ids = []
+    labels = []
+
+    messages = sample["text"]["messages"]
     for message in messages:
-        prompt += f"<{message['role']}> {message['name']}: \n"
-        prompt += f"{message['content']}\n\n"
+        content = f"{message['name']}: \n{message['content']}"
+        value_ids = tokenizer.encode(content)
 
-    return prompt
+        if message["role"] == "user":
+            input_ids += user_tokens + value_ids
+            labels += [tokenizer.eos_token_id] + [ignore_index] * len(value_ids)
+        elif message["role"] == "assistant":
+            input_ids += assistant_tokens + value_ids
+            labels += [ignore_index] + value_ids
+        elif message["role"] == "system":
+            input_ids += system_tokens + value_ids
+            labels += [ignore_index] + value_ids
 
+    input_ids.append(tokenizer.eos_token_id)
+    labels.append(tokenizer.eos_token_id)
 
-def get_max_length(model):
-    max_length = None
+    input_ids = input_ids[:max_length]
+    labels = labels[:max_length]
+    attention_mask = [1] * len(input_ids)
 
-    for length_setting in [
-        "n_positions",
-        "max_position_embeddings",
-        "seq_length",
-        "model_max_length",
-    ]:
-        max_length = getattr(model.config, length_setting, None)
-        if max_length:
-            logger.info(f"Found max length: {max_length}")
-            break
+    input_ids += [tokenizer.pad_token_id] * (max_length - len(input_ids))
+    labels += [ignore_index] * (max_length - len(labels))
+    attention_mask += [0] * (max_length - len(attention_mask))
 
-    if not max_length:
-        max_length = 1024
-        print(f"Using default max length: {max_length}")
-
-    return max_length
-
-
-def preprocess_batch(batch, tokenizer, max_length):
-    """
-    Tokenizing a batch
-    """
-    return tokenizer(
-        batch["text"],
-        max_length=max_length,
-        truncation=True,
-    )
+    return {
+        "input_ids": input_ids,
+        "labels": labels,
+        "attention_mask": attention_mask,
+    }
 
 
 def preprocess_dataset(tokenizer: AutoTokenizer, max_length: int, seed, dataset):
@@ -57,17 +60,12 @@ def preprocess_dataset(tokenizer: AutoTokenizer, max_length: int, seed, dataset)
     # Add prompt to each sample
     logger.info("Preprocessing dataset...")
 
-    # Apply preprocessing to each batch of the dataset & and remove 'instruction', 'context', 'response', 'category' fields
-    _preprocessing_function = partial(
-        preprocess_batch, max_length=max_length, tokenizer=tokenizer
-    )
     dataset = dataset.map(
-        _preprocessing_function,
-        batched=True,
+        partial(preprocessing_function, max_length=max_length, tokenizer=tokenizer),
     )
 
-    # Filter out samples that have input_ids exceeding max_length
-    dataset = dataset.filter(lambda sample: len(sample["input_ids"]) < max_length)
+    # RM keys that are not needed
+    dataset = dataset.remove_columns(["text"])
 
     # Shuffle dataset
     dataset = dataset.shuffle(seed=seed)
@@ -78,21 +76,18 @@ def preprocess_dataset(tokenizer: AutoTokenizer, max_length: int, seed, dataset)
 if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(
         "baichuan-inc/Baichuan2-13B-Base",
-        use_auth_token=True,
         use_fast=False,
         trust_remote_code=True,
     )
 
     # Needed for LLaMA tokenizer
-    tokenizer.pad_token = tokenizer.eos_token
-
     with open("data-parser/data/qq-group-messages.jsonl") as f:
-        dataset = [create_prompt(json.loads(line)) for line in f]
+        dataset = [json.loads(line) for line in f]
     logger.info(f"Loaded {len(dataset)} samples")
 
     dataset = Dataset.from_dict({"text": dataset})
 
-    # 4096 is the max length of the model
-    dataset = preprocess_dataset(tokenizer, 4096, 42, dataset)
+    # 1024 is the max length of the dataset, change this if you want to
+    dataset = preprocess_dataset(tokenizer, 1024, 42, dataset)
 
     dataset.save_to_disk("data/qq-group-messages-tokenized")
