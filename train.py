@@ -31,7 +31,7 @@ def load_model(model_name, bnb_config):
         trust_remote_code=True,
     )
     tokenizer = AutoTokenizer.from_pretrained(
-        model_name, use_auth_token=True, use_fast=False, trust_remote_code=True
+        model_name, use_fast=False, trust_remote_code=True
     )
 
     # Needed for LLaMA tokenizer
@@ -68,28 +68,24 @@ def create_peft_config(modules):
     return config
 
 
-# SOURCE https://github.com/artidoro/qlora/blob/main/qlora.py
-
-
 def find_all_linear_names(model):
-    cls = (
-        bnb.nn.Linear4bit
-    )  # if args.bits == 4 else (bnb.nn.Linear8bitLt if args.bits == 8 else torch.nn.Linear)
     lora_module_names = set()
     for name, module in model.named_modules():
-        if isinstance(module, cls):
+        if isinstance(module, bnb.nn.Linear4bit):
             names = name.split(".")
             lora_module_names.add(names[0] if len(names) == 1 else names[-1])
 
     if "lm_head" in lora_module_names:  # needed for 16-bit
         lora_module_names.remove("lm_head")
+
     return list(lora_module_names)
 
 
-def print_trainable_parameters(model, use_4bit=False):
+def print_trainable_parameters(model, use_4bit=True):
     """
     Prints the number of trainable parameters in the model.
     """
+
     trainable_params = 0
     all_param = 0
     for _, param in model.named_parameters():
@@ -101,10 +97,12 @@ def print_trainable_parameters(model, use_4bit=False):
         all_param += num_params
         if param.requires_grad:
             trainable_params += num_params
+
     if use_4bit:
-        trainable_params /= 2
-    print(
-        f"all params: {all_param:,d} || trainable params: {trainable_params:,d} || trainable%: {100 * trainable_params / all_param}"
+        trainable_params //= 2
+
+    logger.info(
+        f"all params: {all_param:,d} || trainable params: {trainable_params:,d} || trainable: {100 * trainable_params / all_param:.2f} %"
     )
 
 
@@ -129,16 +127,18 @@ def train(model, tokenizer, dataset, output_dir):
     # Training parameters
     trainer = Trainer(
         model=model,
-        train_dataset=dataset,
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["test"],
         args=TrainingArguments(
-            per_device_train_batch_size=1,
+            per_device_train_batch_size=4,
+            per_device_eval_batch_size=8,
             gradient_accumulation_steps=4,
-            warmup_steps=2,
-            max_steps=20,
+            warmup_steps=10,
             learning_rate=2e-4,
             fp16=True,
             logging_steps=1,
-            output_dir="outputs",
+            output_dir="logs",
+            num_train_epochs=10,
             optim="paged_adamw_8bit",
         ),
         data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
@@ -157,24 +157,23 @@ def train(model, tokenizer, dataset, output_dir):
         if dtype not in dtypes:
             dtypes[dtype] = 0
         dtypes[dtype] += p.numel()
+
     total = 0
     for k, v in dtypes.items():
         total += v
+
     for k, v in dtypes.items():
         print(k, v, v / total)
-
-    do_train = True
 
     # Launch training
     logger.info("Training...")
 
-    if do_train:
-        train_result = trainer.train()
-        metrics = train_result.metrics
-        trainer.log_metrics("train", metrics)
-        trainer.save_metrics("train", metrics)
-        trainer.save_state()
-        logger.info(metrics)
+    train_result = trainer.train()
+    metrics = train_result.metrics
+    trainer.log_metrics("train", metrics)
+    trainer.save_metrics("train", metrics)
+    trainer.save_state()
+    logger.info(metrics)
 
     ###
 
@@ -191,11 +190,11 @@ def train(model, tokenizer, dataset, output_dir):
 
 def merge_weights(output_dir):
     model = AutoPeftModelForCausalLM.from_pretrained(
-        output_dir, device_map="auto", torch_dtype=torch.bfloat16
+        output_dir, device_map="auto", torch_dtype=torch.bfloat16, rust_remote_code=True
     )
     model = model.merge_and_unload()
 
-    output_merged_dir = "results/llama2/final_merged_checkpoint"
+    output_merged_dir = output_dir + "/merged_checkpoint"
     os.makedirs(output_merged_dir, exist_ok=True)
     model.save_pretrained(output_merged_dir, safe_serialization=True)
 
@@ -207,7 +206,11 @@ def merge_weights(output_dir):
 if __name__ == "__main__":
     # Load dataset
     dataset = load_from_disk("data/qq-group-messages-tokenized")
-    logger.info(f"Loaded {len(dataset)} samples")
+    dataset = dataset.train_test_split(test_size=0.01)
+
+    logger.info(
+        f"Loaded {len(dataset['train'])} for training, {len(dataset['test'])} for testing"
+    )
 
     # Load model from HF with user's token and with bitsandbytes config
     model_name = "baichuan-inc/Baichuan2-13B-Base"
