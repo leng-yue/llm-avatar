@@ -127,17 +127,17 @@ def train(model, tokenizer, dataset, output_dir):
     # Training parameters
     trainer = Trainer(
         model=model,
-        train_dataset=dataset["train"],
-        eval_dataset=dataset["test"],
+        train_dataset=dataset,
         args=TrainingArguments(
             per_device_train_batch_size=4,
-            per_device_eval_batch_size=8,
             gradient_accumulation_steps=4,
             warmup_steps=10,
             learning_rate=2e-4,
-            fp16=True,
+            fp16=False,
             logging_steps=1,
             output_dir="logs",
+            save_steps=100,
+            save_total_limit=10,
             num_train_epochs=10,
             optim="paged_adamw_8bit",
         ),
@@ -206,11 +206,8 @@ def merge_weights(output_dir):
 if __name__ == "__main__":
     # Load dataset
     dataset = load_from_disk("data/qq-group-messages-tokenized")
-    dataset = dataset.train_test_split(test_size=0.01)
 
-    logger.info(
-        f"Loaded {len(dataset['train'])} for training, {len(dataset['test'])} for testing"
-    )
+    logger.info(f"Loaded {len(dataset)} samples")
 
     # Load model from HF with user's token and with bitsandbytes config
     model_name = "baichuan-inc/Baichuan2-13B-Base"
