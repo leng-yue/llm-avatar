@@ -10,9 +10,6 @@ def preprocessing_function(
     sample,
     tokenizer,
     max_length,
-    user_tokens=[195],
-    assistant_tokens=[196],
-    system_tokens=[197],
     ignore_index=-100,
     inference=False,
 ):
@@ -21,18 +18,21 @@ def preprocessing_function(
 
     messages = sample["text"]["messages"]
     for message in messages:
-        content = f"{message['name']}: \n{message['content']}"
-        value_ids = tokenizer.encode(content)
+        role = f"[ROLE]{message['role']}: {message['name']}[/ROLE]\n"
+        content = f"{message['content']}\n"
+
+        role_ids = tokenizer.encode(role)
+        content_ids = tokenizer.encode(content)
+        input_ids += role_ids + content_ids
 
         if message["role"] == "user":
-            input_ids += user_tokens + value_ids
-            labels += [tokenizer.eos_token_id] + [ignore_index] * len(value_ids)
+            labels += [tokenizer.eos_token_id] + [ignore_index] * (
+                len(role_ids) + len(content_ids) - 1
+            )
         elif message["role"] == "assistant":
-            input_ids += assistant_tokens + value_ids
-            labels += [ignore_index] + value_ids
+            labels += [ignore_index] * len(role_ids) + content_ids
         elif message["role"] == "system":
-            input_ids += system_tokens + value_ids
-            labels += [ignore_index] + value_ids
+            labels += [ignore_index] * (len(role_ids) + len(content_ids))
 
     if inference is False:
         input_ids.append(tokenizer.eos_token_id)
