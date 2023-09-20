@@ -210,6 +210,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut message_queue = Vec::new();
 
         for message in group_messages {
+            if message.msg.is_empty() {
+                continue;
+            }
+
             let role = if &message.user_id == &user_unique_id {
                 "assistant".to_string()
             } else {
