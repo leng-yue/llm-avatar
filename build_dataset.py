@@ -14,6 +14,7 @@ def preprocessing_function(
     assistant_tokens=[196],
     system_tokens=[197],
     ignore_index=-100,
+    pad_to_max_length=True,
 ):
     input_ids = []
     labels = []
@@ -40,9 +41,10 @@ def preprocessing_function(
     labels = labels[:max_length]
     attention_mask = [1] * len(input_ids)
 
-    input_ids += [tokenizer.pad_token_id] * (max_length - len(input_ids))
-    labels += [ignore_index] * (max_length - len(labels))
-    attention_mask += [0] * (max_length - len(attention_mask))
+    if pad_to_max_length:
+        input_ids += [tokenizer.pad_token_id] * (max_length - len(input_ids))
+        labels += [ignore_index] * (max_length - len(labels))
+        attention_mask += [0] * (max_length - len(attention_mask))
 
     return {
         "input_ids": input_ids,
